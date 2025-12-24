@@ -1,0 +1,11 @@
+# Nightlife Social Content Engine
+# Python 3.8+
+
+# No external dependencies required for core functionality
+# All functionality uses Python standard library
+
+# Optional development dependencies
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.950
