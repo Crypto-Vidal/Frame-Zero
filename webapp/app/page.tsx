@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ContentGenerator } from "@/lib/core/content-generator";
 import {
   BusinessType,
@@ -13,6 +13,10 @@ import {
 } from "@/lib/models/brand-profile";
 import { ContentType, MediaType } from "@/lib/models/content-request";
 import { EventContext } from "@/lib/models/event-context";
+import { BusinessProfile } from "@/lib/models/business-profile";
+import { BusinessStorage } from "@/lib/utils/business-storage";
+import { FlyerGenerator } from "@/lib/utils/flyer-generator";
+import ResourcesManager from "./components/ResourcesManager";
 
 interface UploadedMedia {
   id: string;
@@ -22,6 +26,11 @@ interface UploadedMedia {
 }
 
 export default function Home() {
+  // Business State
+  const [selectedBusiness, setSelectedBusiness] = useState<BusinessProfile | null>(null);
+  const [showResources, setShowResources] = useState(false);
+  const [availableBusinesses, setAvailableBusinesses] = useState<BusinessProfile[]>([]);
+
   // Brand Profile State
   const [businessType, setBusinessType] = useState<BusinessType>(
     BusinessType.LOUNGE
@@ -44,6 +53,7 @@ export default function Home() {
     ContentType.INSTAGRAM_REEL
   );
   const [mediaType, setMediaType] = useState<MediaType>(MediaType.PHOTO);
+  const [flyerTemplate, setFlyerTemplate] = useState<"modern" | "minimal" | "bold">("modern");
 
   // Event Context State
   const [eventName, setEventName] = useState("");
@@ -58,8 +68,45 @@ export default function Home() {
 
   // Output State
   const [generatedContent, setGeneratedContent] = useState("");
+  const [generatedFlyer, setGeneratedFlyer] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Load businesses on mount
+  useEffect(() => {
+    loadBusinesses();
+  }, []);
+
+  const loadBusinesses = () => {
+    const businesses = BusinessStorage.getAll();
+    setAvailableBusinesses(businesses);
+  };
+
+  const handleSelectBusiness = (business: BusinessProfile) => {
+    setSelectedBusiness(business);
+    // Load business settings
+    setBusinessType(business.brandSettings.businessType);
+    setBrandEnergy(business.brandSettings.brandEnergy);
+    setTargetCrowd(business.brandSettings.targetCrowd);
+    setContentFocus(business.brandSettings.contentFocus);
+    setPostingVibe(business.brandSettings.postingVibe);
+    setCTAStyle(business.brandSettings.ctaStyle);
+    setWordsToAvoid(business.brandSettings.wordsToAvoid.join(", "));
+
+    // Load saved media if any
+    if (business.savedMedia.length > 0) {
+      const media: UploadedMedia[] = business.savedMedia.map((m) => ({
+        id: m.id,
+        file: new File([], m.name), // Placeholder
+        preview: m.dataUrl,
+        type: m.type,
+      }));
+      setUploadedMedia(media);
+    }
+
+    loadBusinesses();
+  };
 
   const handleContentFocusChange = (focus: ContentFocus) => {
     if (contentFocus.includes(focus)) {
@@ -124,10 +171,11 @@ export default function Home() {
     });
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     try {
       setError("");
       setCopied(false);
+      setIsGenerating(true);
 
       // Build brand profile
       const brandProfile: BrandProfile = {
@@ -165,8 +213,33 @@ export default function Home() {
       });
 
       setGeneratedContent(content);
+
+      // Generate flyer if content type is Flyer and we have media
+      if (contentType === ContentType.FLYER && uploadedMedia.length > 0) {
+        const flyerGen = new FlyerGenerator();
+
+        // Parse the generated content
+        const lines = content.split("\n").filter(l => l.trim());
+        const headline = lines[0] || eventName || "TONIGHT";
+        const subheadline = lines[1] || "";
+        const eventDetails = lines.slice(3).join("\n") || "";
+
+        const flyerImage = await flyerGen.generate({
+          backgroundImage: uploadedMedia[0].preview,
+          headline,
+          subheadline,
+          eventDetails,
+          template: flyerTemplate,
+        });
+
+        setGeneratedFlyer(flyerImage);
+      } else {
+        setGeneratedFlyer(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -180,437 +253,114 @@ export default function Home() {
     }
   };
 
+  const handleDownloadFlyer = () => {
+    if (!generatedFlyer) return;
+
+    const flyerGen = new FlyerGenerator();
+    const filename = `${eventName || 'flyer'}-${Date.now()}.jpg`;
+    flyerGen.downloadFlyer(generatedFlyer, filename);
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-white mb-4">Frame Zero</h1>
-          <p className="text-xl text-purple-200">
-            Nightlife Social Content Engine
-          </p>
-          <p className="text-sm text-purple-300 mt-2">
-            Upload your media and generate ready-to-post content
-          </p>
-        </header>
+    <>
+      {showResources && (
+        <ResourcesManager
+          onClose={() => {
+            setShowResources(false);
+            loadBusinesses();
+          }}
+          onSelectBusiness={handleSelectBusiness}
+        />
+      )}
 
-        <div className="grid lg:grid-cols-2 gap-8">
-          {/* Form Column */}
-          <div className="space-y-6">
-            {/* Media Upload Card */}
-            <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-4">
-                Upload Media
-              </h2>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
+          {/* Header */}
+          <header className="text-center mb-8">
+            <h1 className="text-5xl font-bold text-white mb-4">Frame Zero</h1>
+            <p className="text-xl text-purple-200">
+              Nightlife Social Content Engine
+            </p>
+            <p className="text-sm text-purple-300 mt-2">
+              Upload your media and generate ready-to-post content
+            </p>
 
-              {/* Upload Area */}
-              <div
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
-                  isDragging
-                    ? "border-purple-400 bg-purple-500/20"
-                    : "border-white/30 hover:border-purple-400 hover:bg-white/5"
-                }`}
+            {/* Business Selector & Resources Button */}
+            <div className="mt-6 flex items-center justify-center gap-4">
+              <select
+                value={selectedBusiness?.id || ""}
+                onChange={(e) => {
+                  const business = availableBusinesses.find(
+                    (b) => b.id === e.target.value
+                  );
+                  if (business) handleSelectBusiness(business);
+                  else setSelectedBusiness(null);
+                }}
+                className="px-4 py-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,video/*"
-                  onChange={(e) => handleFileSelect(e.target.files)}
-                  className="hidden"
-                />
-
-                <svg
-                  className="w-12 h-12 mx-auto mb-4 text-purple-300"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                  />
-                </svg>
-
-                <p className="text-white font-medium mb-2">
-                  Drop images or videos here
-                </p>
-                <p className="text-purple-300 text-sm">
-                  or click to browse files
-                </p>
-              </div>
-
-              {/* Uploaded Media Preview */}
-              {uploadedMedia.length > 0 && (
-                <div className="mt-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm text-purple-200">
-                      {uploadedMedia.length} file
-                      {uploadedMedia.length !== 1 ? "s" : ""} uploaded
-                    </p>
-                    <button
-                      onClick={() => {
-                        uploadedMedia.forEach((m) =>
-                          URL.revokeObjectURL(m.preview)
-                        );
-                        setUploadedMedia([]);
-                      }}
-                      className="text-sm text-red-400 hover:text-red-300"
-                    >
-                      Clear all
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    {uploadedMedia.map((media) => (
-                      <div
-                        key={media.id}
-                        className="relative group rounded-lg overflow-hidden bg-black/30 aspect-square"
-                      >
-                        {media.type === "image" ? (
-                          <img
-                            src={media.preview}
-                            alt="Uploaded"
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <video
-                            src={media.preview}
-                            className="w-full h-full object-cover"
-                            muted
-                          />
-                        )}
-
-                        {/* Remove button */}
-                        <button
-                          onClick={() => removeMedia(media.id)}
-                          className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          ×
-                        </button>
-
-                        {/* Type indicator */}
-                        <div className="absolute bottom-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                          {media.type === "video" ? "📹" : "📷"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Brand Profile Card */}
-            <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-4">
-                Brand Profile
-              </h2>
-
-              {/* Business Type */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Business Type
-                </label>
-                <select
-                  value={businessType}
-                  onChange={(e) =>
-                    setBusinessType(e.target.value as BusinessType)
-                  }
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(BusinessType).map((type) => (
-                    <option key={type} value={type} className="bg-slate-900">
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Brand Energy */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Brand Energy
-                </label>
-                <select
-                  value={brandEnergy}
-                  onChange={(e) =>
-                    setBrandEnergy(e.target.value as BrandEnergy)
-                  }
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(BrandEnergy).map((energy) => (
-                    <option
-                      key={energy}
-                      value={energy}
-                      className="bg-slate-900"
-                    >
-                      {energy}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Target Crowd */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Target Crowd
-                </label>
-                <select
-                  value={targetCrowd}
-                  onChange={(e) =>
-                    setTargetCrowd(e.target.value as TargetCrowd)
-                  }
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(TargetCrowd).map((crowd) => (
-                    <option key={crowd} value={crowd} className="bg-slate-900">
-                      {crowd}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Content Focus */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Content Focus (Max 2)
-                </label>
-                <div className="space-y-2">
-                  {Object.values(ContentFocus).map((focus) => (
-                    <label
-                      key={focus}
-                      className="flex items-center space-x-2 text-white cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={contentFocus.includes(focus)}
-                        onChange={() => handleContentFocusChange(focus)}
-                        disabled={
-                          !contentFocus.includes(focus) &&
-                          contentFocus.length >= 2
-                        }
-                        className="w-4 h-4 text-purple-600 border-white/20 rounded focus:ring-purple-500"
-                      />
-                      <span className="text-sm">{focus}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Posting Vibe */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Posting Vibe
-                </label>
-                <select
-                  value={postingVibe}
-                  onChange={(e) =>
-                    setPostingVibe(e.target.value as PostingVibe)
-                  }
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(PostingVibe).map((vibe) => (
-                    <option key={vibe} value={vibe} className="bg-slate-900">
-                      {vibe}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* CTA Style */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  CTA Style
-                </label>
-                <select
-                  value={ctaStyle}
-                  onChange={(e) => setCTAStyle(e.target.value as CTAStyle)}
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(CTAStyle).map((style) => (
-                    <option key={style} value={style} className="bg-slate-900">
-                      {style}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Words to Avoid */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Words to Avoid (comma-separated)
-                </label>
-                <input
-                  type="text"
-                  value={wordsToAvoid}
-                  onChange={(e) => setWordsToAvoid(e.target.value)}
-                  placeholder="epic, unforgettable, exclusive"
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-            </div>
-
-            {/* Content Settings Card */}
-            <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-4">
-                Content Settings
-              </h2>
-
-              {/* Content Type */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Content Type
-                </label>
-                <select
-                  value={contentType}
-                  onChange={(e) =>
-                    setContentType(e.target.value as ContentType)
-                  }
-                  className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  {Object.values(ContentType).map((type) => (
-                    <option key={type} value={type} className="bg-slate-900">
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Media Type */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-purple-200 mb-2">
-                  Media Type
-                </label>
-                <div className="flex space-x-4">
-                  <label className="flex items-center space-x-2 text-white cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={mediaType === MediaType.PHOTO}
-                      onChange={() => setMediaType(MediaType.PHOTO)}
-                      className="w-4 h-4 text-purple-600 border-white/20 focus:ring-purple-500"
-                    />
-                    <span>Photo</span>
-                  </label>
-                  <label className="flex items-center space-x-2 text-white cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={mediaType === MediaType.VIDEO}
-                      onChange={() => setMediaType(MediaType.VIDEO)}
-                      className="w-4 h-4 text-purple-600 border-white/20 focus:ring-purple-500"
-                    />
-                    <span>Video</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* Event Context Card */}
-            <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
-              <h2 className="text-2xl font-bold text-white mb-4">
-                Event Details (Optional)
-              </h2>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Event Name
-                  </label>
-                  <input
-                    type="text"
-                    value={eventName}
-                    onChange={(e) => setEventName(e.target.value)}
-                    placeholder="Late Night Sessions"
-                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Event Date
-                  </label>
-                  <input
-                    type="date"
-                    value={eventDate}
-                    onChange={(e) => setEventDate(e.target.value)}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    DJ / Performer
-                  </label>
-                  <input
-                    type="text"
-                    value={djPerformer}
-                    onChange={(e) => setDJPerformer(e.target.value)}
-                    placeholder="DJ Shadow"
-                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Special Notes
-                  </label>
-                  <textarea
-                    value={specialNotes}
-                    onChange={(e) => setSpecialNotes(e.target.value)}
-                    placeholder="Special event details..."
-                    rows={3}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Generate Button */}
-            <button
-              onClick={handleGenerate}
-              className="w-full px-6 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg hover:from-purple-700 hover:to-pink-700 transform hover:scale-105 transition-all duration-200 shadow-lg"
-            >
-              Generate Content
-            </button>
-          </div>
-
-          {/* Output Column */}
-          <div className="space-y-6">
-            <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20 sticky top-8">
-              <h2 className="text-2xl font-bold text-white mb-4">
-                Generated Content
-              </h2>
-
-              {error && (
-                <div className="mb-4 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200">
-                  {error}
-                </div>
-              )}
-
-              {generatedContent ? (
-                <>
-                  <div className="mb-4 p-6 bg-black/30 rounded-lg border border-white/10 min-h-[300px]">
-                    <pre className="text-white whitespace-pre-wrap font-mono text-sm">
-                      {generatedContent}
-                    </pre>
-                  </div>
-
-                  <button
-                    onClick={handleCopy}
-                    className="w-full px-6 py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg border border-white/20 transition-all duration-200"
+                <option value="" className="bg-slate-900">
+                  Create New...
+                </option>
+                {availableBusinesses.map((business) => (
+                  <option
+                    key={business.id}
+                    value={business.id}
+                    className="bg-slate-900"
                   >
-                    {copied ? "✓ Copied!" : "Copy to Clipboard"}
-                  </button>
-                </>
-              ) : (
-                <div className="p-12 text-center text-purple-300">
+                    {business.businessName}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                onClick={() => setShowResources(true)}
+                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+              >
+                📁 Resources
+              </button>
+            </div>
+
+            {selectedBusiness && (
+              <div className="mt-3 inline-block px-4 py-2 bg-purple-600/30 backdrop-blur-md rounded-lg border border-purple-400/50">
+                <p className="text-sm text-purple-200">
+                  Using: <span className="font-semibold text-white">{selectedBusiness.businessName}</span>
+                </p>
+              </div>
+            )}
+          </header>
+
+          <div className="grid lg:grid-cols-2 gap-8">
+            {/* Form Column */}
+            <div className="space-y-6">
+              {/* Media Upload Card */}
+              <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
+                <h2 className="text-2xl font-bold text-white mb-4">
+                  Upload Media
+                </h2>
+
+                {/* Upload Area */}
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
+                    isDragging
+                      ? "border-purple-400 bg-purple-500/20"
+                      : "border-white/30 hover:border-purple-400 hover:bg-white/5"
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,video/*"
+                    onChange={(e) => handleFileSelect(e.target.files)}
+                    className="hidden"
+                  />
+
                   <svg
-                    className="w-16 h-16 mx-auto mb-4 opacity-50"
+                    className="w-12 h-12 mx-auto mb-4 text-purple-300"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -619,27 +369,455 @@ export default function Home() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                     />
                   </svg>
-                  <p>Your generated content will appear here</p>
-                  <p className="text-sm mt-2 opacity-75">
-                    Upload media, configure your settings, and click Generate
+
+                  <p className="text-white font-medium mb-2">
+                    Drop images or videos here
+                  </p>
+                  <p className="text-purple-300 text-sm">
+                    or click to browse files
                   </p>
                 </div>
-              )}
+
+                {/* Uploaded Media Preview */}
+                {uploadedMedia.length > 0 && (
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm text-purple-200">
+                        {uploadedMedia.length} file
+                        {uploadedMedia.length !== 1 ? "s" : ""} uploaded
+                      </p>
+                      <button
+                        onClick={() => {
+                          uploadedMedia.forEach((m) =>
+                            URL.revokeObjectURL(m.preview)
+                          );
+                          setUploadedMedia([]);
+                        }}
+                        className="text-sm text-red-400 hover:text-red-300"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      {uploadedMedia.map((media) => (
+                        <div
+                          key={media.id}
+                          className="relative group rounded-lg overflow-hidden bg-black/30 aspect-square"
+                        >
+                          {media.type === "image" ? (
+                            <img
+                              src={media.preview}
+                              alt="Uploaded"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <video
+                              src={media.preview}
+                              className="w-full h-full object-cover"
+                              muted
+                            />
+                          )}
+
+                          {/* Remove button */}
+                          <button
+                            onClick={() => removeMedia(media.id)}
+                            className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            ×
+                          </button>
+
+                          {/* Type indicator */}
+                          <div className="absolute bottom-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                            {media.type === "video" ? "📹" : "📷"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Brand Profile Card */}
+              <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
+                <h2 className="text-2xl font-bold text-white mb-4">
+                  Brand Profile
+                </h2>
+
+                {/* Business Type */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Business Type
+                  </label>
+                  <select
+                    value={businessType}
+                    onChange={(e) =>
+                      setBusinessType(e.target.value as BusinessType)
+                    }
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(BusinessType).map((type) => (
+                      <option key={type} value={type} className="bg-slate-900">
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Brand Energy */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Brand Energy
+                  </label>
+                  <select
+                    value={brandEnergy}
+                    onChange={(e) =>
+                      setBrandEnergy(e.target.value as BrandEnergy)
+                    }
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(BrandEnergy).map((energy) => (
+                      <option
+                        key={energy}
+                        value={energy}
+                        className="bg-slate-900"
+                      >
+                        {energy}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Target Crowd */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Target Crowd
+                  </label>
+                  <select
+                    value={targetCrowd}
+                    onChange={(e) =>
+                      setTargetCrowd(e.target.value as TargetCrowd)
+                    }
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(TargetCrowd).map((crowd) => (
+                      <option key={crowd} value={crowd} className="bg-slate-900">
+                        {crowd}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Content Focus */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Content Focus (Max 2)
+                  </label>
+                  <div className="space-y-2">
+                    {Object.values(ContentFocus).map((focus) => (
+                      <label
+                        key={focus}
+                        className="flex items-center space-x-2 text-white cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={contentFocus.includes(focus)}
+                          onChange={() => handleContentFocusChange(focus)}
+                          disabled={
+                            !contentFocus.includes(focus) &&
+                            contentFocus.length >= 2
+                          }
+                          className="w-4 h-4 text-purple-600 border-white/20 rounded focus:ring-purple-500"
+                        />
+                        <span className="text-sm">{focus}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Posting Vibe */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Posting Vibe
+                  </label>
+                  <select
+                    value={postingVibe}
+                    onChange={(e) =>
+                      setPostingVibe(e.target.value as PostingVibe)
+                    }
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(PostingVibe).map((vibe) => (
+                      <option key={vibe} value={vibe} className="bg-slate-900">
+                        {vibe}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* CTA Style */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    CTA Style
+                  </label>
+                  <select
+                    value={ctaStyle}
+                    onChange={(e) => setCTAStyle(e.target.value as CTAStyle)}
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(CTAStyle).map((style) => (
+                      <option key={style} value={style} className="bg-slate-900">
+                        {style}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Words to Avoid */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Words to Avoid (comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    value={wordsToAvoid}
+                    onChange={(e) => setWordsToAvoid(e.target.value)}
+                    placeholder="epic, unforgettable, exclusive"
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Content Settings Card */}
+              <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
+                <h2 className="text-2xl font-bold text-white mb-4">
+                  Content Settings
+                </h2>
+
+                {/* Content Type */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Content Type
+                  </label>
+                  <select
+                    value={contentType}
+                    onChange={(e) =>
+                      setContentType(e.target.value as ContentType)
+                    }
+                    className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    {Object.values(ContentType).map((type) => (
+                      <option key={type} value={type} className="bg-slate-900">
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Media Type */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-purple-200 mb-2">
+                    Media Type
+                  </label>
+                  <div className="flex space-x-4">
+                    <label className="flex items-center space-x-2 text-white cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={mediaType === MediaType.PHOTO}
+                        onChange={() => setMediaType(MediaType.PHOTO)}
+                        className="w-4 h-4 text-purple-600 border-white/20 focus:ring-purple-500"
+                      />
+                      <span>Photo</span>
+                    </label>
+                    <label className="flex items-center space-x-2 text-white cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={mediaType === MediaType.VIDEO}
+                        onChange={() => setMediaType(MediaType.VIDEO)}
+                        className="w-4 h-4 text-purple-600 border-white/20 focus:ring-purple-500"
+                      />
+                      <span>Video</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Flyer Template Selection (only show for Flyers) */}
+                {contentType === ContentType.FLYER && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-purple-200 mb-2">
+                      Flyer Template
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["modern", "minimal", "bold"] as const).map((template) => (
+                        <button
+                          key={template}
+                          onClick={() => setFlyerTemplate(template)}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            flyerTemplate === template
+                              ? "bg-purple-600 text-white"
+                              : "bg-white/10 text-purple-200 hover:bg-white/20"
+                          }`}
+                        >
+                          {template.charAt(0).toUpperCase() + template.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Event Context Card */}
+              <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20">
+                <h2 className="text-2xl font-bold text-white mb-4">
+                  Event Details (Optional)
+                </h2>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-purple-200 mb-2">
+                      Event Name
+                    </label>
+                    <input
+                      type="text"
+                      value={eventName}
+                      onChange={(e) => setEventName(e.target.value)}
+                      placeholder="Late Night Sessions"
+                      className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-purple-200 mb-2">
+                      Event Date
+                    </label>
+                    <input
+                      type="date"
+                      value={eventDate}
+                      onChange={(e) => setEventDate(e.target.value)}
+                      className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-purple-200 mb-2">
+                      DJ / Performer
+                    </label>
+                    <input
+                      type="text"
+                      value={djPerformer}
+                      onChange={(e) => setDJPerformer(e.target.value)}
+                      placeholder="DJ Shadow"
+                      className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-purple-200 mb-2">
+                      Special Notes
+                    </label>
+                    <textarea
+                      value={specialNotes}
+                      onChange={(e) => setSpecialNotes(e.target.value)}
+                      placeholder="Special event details..."
+                      rows={3}
+                      className="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Generate Button */}
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className="w-full px-6 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-lg hover:from-purple-700 hover:to-pink-700 transform hover:scale-105 transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+              >
+                {isGenerating ? "Generating..." : "Generate Content"}
+              </button>
+            </div>
+
+            {/* Output Column */}
+            <div className="space-y-6">
+              <div className="bg-white/10 backdrop-blur-md rounded-lg p-6 border border-white/20 sticky top-8">
+                <h2 className="text-2xl font-bold text-white mb-4">
+                  Generated Content
+                </h2>
+
+                {error && (
+                  <div className="mb-4 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200">
+                    {error}
+                  </div>
+                )}
+
+                {generatedContent ? (
+                  <>
+                    {/* Show Flyer Image if generated */}
+                    {generatedFlyer && (
+                      <div className="mb-6">
+                        <img
+                          src={generatedFlyer}
+                          alt="Generated Flyer"
+                          className="w-full rounded-lg shadow-2xl"
+                        />
+                        <button
+                          onClick={handleDownloadFlyer}
+                          className="w-full mt-3 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-all duration-200"
+                        >
+                          ⬇ Download Flyer
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="mb-4 p-6 bg-black/30 rounded-lg border border-white/10 min-h-[200px]">
+                      <pre className="text-white whitespace-pre-wrap font-mono text-sm">
+                        {generatedContent}
+                      </pre>
+                    </div>
+
+                    <button
+                      onClick={handleCopy}
+                      className="w-full px-6 py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg border border-white/20 transition-all duration-200"
+                    >
+                      {copied ? "✓ Copied!" : "Copy to Clipboard"}
+                    </button>
+                  </>
+                ) : (
+                  <div className="p-12 text-center text-purple-300">
+                    <svg
+                      className="w-16 h-16 mx-auto mb-4 opacity-50"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    <p>Your generated content will appear here</p>
+                    <p className="text-sm mt-2 opacity-75">
+                      Upload media, configure your settings, and click Generate
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Footer */}
-        <footer className="mt-12 text-center text-purple-300 text-sm">
-          <p>Frame Zero - Nightlife Social Content Engine</p>
-          <p className="mt-2 opacity-75">
-            Built for nightlife businesses that demand quality content
-          </p>
-        </footer>
+          {/* Footer */}
+          <footer className="mt-12 text-center text-purple-300 text-sm">
+            <p>Frame Zero - Nightlife Social Content Engine</p>
+            <p className="mt-2 opacity-75">
+              Built for nightlife businesses that demand quality content
+            </p>
+          </footer>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
